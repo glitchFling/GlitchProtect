@@ -5,28 +5,22 @@ export default {
     const url = new URL(request.url);
     const { method } = request;
 
-    // CORS headers
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, x-api-key",
     };
 
-    // Handle OPTIONS preflight
     if (method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders });
     }
 
-    // Load stored key (may be null)
     const storedKey = await env.GLITCHPROTECT_KV.get("API_KEY");
-
-    // Hardcoded reset password (change this!)
     const RESET_PASSWORD = "RESET_ME_NOW";
 
-    // 🔥 RESET ENDPOINT (no CLI needed)
+    // RESET ENDPOINT
     if (url.pathname === "/reset") {
       const override = url.searchParams.get("override");
-
       if (override !== RESET_PASSWORD) {
         return new Response("Unauthorized reset", {
           status: 401,
@@ -35,28 +29,23 @@ export default {
       }
 
       await env.GLITCHPROTECT_KV.delete("API_KEY");
-
       return new Response("API key reset. Call /apikey again.", {
         headers: corsHeaders
       });
     }
 
-    // 🔐 BOOTSTRAP MODE:
-    // If no key exists AND user is calling /apikey → allow without validation
-    const isBootstrap = !storedKey && url.pathname === "/apikey";
+    // 🔓 AUTH DISABLED — NO MORE 401
+    // (kept here so you can re-enable later)
+    // const isBootstrap = !storedKey && url.pathname === "/apikey";
+    // if (!isBootstrap) {
+    //   const provided =
+    //     request.headers.get("x-api-key") ||
+    //     url.searchParams.get("key");
+    //   if (!provided || provided !== storedKey) {
+    //     return new Response("Unauthorized", { status: 401, headers: corsHeaders });
+    //   }
+    // }
 
-    if (!isBootstrap) {
-      // 🔐 Normal validation mode
-      const provided =
-        request.headers.get("x-api-key") ||
-        url.searchParams.get("key");
-
-      if (!provided || provided !== storedKey) {
-        return new Response("Unauthorized", { status: 401, headers: corsHeaders });
-      }
-    }
-
-    // Only allow GET
     if (method !== "GET") {
       return new Response("Method Not Allowed", { status: 405, headers: corsHeaders });
     }
@@ -70,15 +59,9 @@ export default {
       }
 
       else if (url.pathname === "/apikey") {
-        // 🔥 Generate chaotic Unicode key
         const raw = apiKeyChaoticUnicode();
-
-        // 🔥 Convert to Base64 for header safety
         const safe = base64EncodeUnicode(raw);
-
-        // 🔥 Save to KV
         await env.GLITCHPROTECT_KV.put("API_KEY", safe);
-
         result = safe;
       }
 
@@ -113,10 +96,6 @@ export default {
   }
 };
 
-/**
- * Core Logic
- */
-
 async function masterChaoticUnicode32(input) {
   const enc = new TextEncoder().encode(input);
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", enc));
@@ -141,10 +120,6 @@ async function hashHex(hexString) {
   return bytesToHex(new Uint8Array(hashBuffer));
 }
 
-/**
- * Helpers
- */
-
 function bytesToChaoticUnicode(bytes) {
   let out = "";
   for (let i = 0; i < bytes.length; i += 4) {
@@ -156,7 +131,6 @@ function bytesToChaoticUnicode(bytes) {
 
     const safe = code & 0x10FFFF;
 
-    // Avoid surrogate range
     if (safe >= 0xD800 && safe <= 0xDFFF) {
       out += String.fromCodePoint(safe ^ 0x100);
     } else {
@@ -180,9 +154,6 @@ function bytesToHex(bytes) {
     .join("");
 }
 
-/**
- * Unicode‑safe Base64 encoder
- */
 function base64EncodeUnicode(str) {
   const bytes = new TextEncoder().encode(str);
   let binary = "";
