@@ -1,0 +1,12 @@
+{
+  "name": "glitchprotect",
+  "main": "index.js",
+  "compatibility_date": "2026-03-24",
+  "workers_dev": false,
+  "kv_namespaces": [
+    {
+      "binding": "GLITCHPROTECT_KV",
+      "id": "3f8afb46acf14c3a9c7bf04b09ffe465",
+    },
+  ], 
+}
