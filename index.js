@@ -17,18 +17,20 @@ export default {
       return new Response(null, { headers: corsHeaders });
     }
 
-    // 🔐 KV API KEY CHECK
-const storedKey = await env.GLITCHPROTECT_KV.get("API_KEY");
+    // Load stored key (may be null)
+    const storedKey = await env.GLITCHPROTECT_KV.get("API_KEY");
 
-// Allow /apikey with no stored key (bootstrap mode)
-if (!storedKey && url.pathname === "/apikey") {
-  // allow through without validation
-} else {
-  const provided = request.headers.get("x-api-key");
-  if (!provided || provided !== storedKey) {
-    return new Response("Unauthorized", { status: 401, headers: corsHeaders });
-  }
-}
+    // 🔐 BOOTSTRAP MODE:
+    // If no key exists AND user is calling /apikey → allow without validation
+    const isBootstrap = !storedKey && url.pathname === "/apikey";
+
+    if (!isBootstrap) {
+      // 🔐 Normal validation mode
+      const provided = request.headers.get("x-api-key");
+      if (!provided || provided !== storedKey) {
+        return new Response("Unauthorized", { status: 401, headers: corsHeaders });
+      }
+    }
 
     // Only allow GET
     if (method !== "GET") {
@@ -44,13 +46,16 @@ if (!storedKey && url.pathname === "/apikey") {
       }
 
       else if (url.pathname === "/apikey") {
-        // 🔥 Generate new key
-        const newKey = apiKeyChaoticUnicode();
+        // 🔥 Generate chaotic Unicode key
+        const raw = apiKeyChaoticUnicode();
+
+        // 🔥 Convert to Base64 for header safety
+        const safe = btoa(raw);
 
         // 🔥 Save to KV
-        await env.GLITCHPROTECT_KV.put("API_KEY", newKey);
+        await env.GLITCHPROTECT_KV.put("API_KEY", safe);
 
-        result = newKey;
+        result = safe;
       }
 
       else if (url.pathname === "/hash") {
@@ -83,19 +88,6 @@ if (!storedKey && url.pathname === "/apikey") {
     }
   }
 };
-
-/**
- * KV API Key Validator
- */
-async function validateApiKey(request, env) {
-  const provided = request.headers.get("x-api-key");
-  if (!provided) return false;
-
-  const stored = await env.GLITCHPROTECT_KV.get("API_KEY");
-  if (!stored) return false;
-
-  return provided === stored;
-}
 
 /**
  * Core Logic
