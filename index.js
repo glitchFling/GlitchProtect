@@ -1,22 +1,28 @@
 // index.js
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const { method } = request;
 
-    // Define CORS headers to allow cross-origin requests
+    // CORS headers
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Allow-Headers": "Content-Type, x-api-key",
     };
 
-    // Handle CORS preflight (OPTIONS) requests
+    // Handle OPTIONS preflight
     if (method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders });
     }
 
-    // Only allow GET requests for our logic
+    // 🔐 KV API KEY CHECK
+    if (!(await validateApiKey(request, env))) {
+      return new Response("Unauthorized", { status: 401, headers: corsHeaders });
+    }
+
+    // Only allow GET
     if (method !== "GET") {
       return new Response("Method Not Allowed", { status: 405, headers: corsHeaders });
     }
@@ -27,27 +33,61 @@ export default {
       if (url.pathname === "/generate") {
         const input = url.searchParams.get("input") || "default";
         result = await masterChaoticUnicode32(input);
-      } 
+      }
+
       else if (url.pathname === "/apikey") {
-        result = apiKeyChaoticUnicode();
-      } 
+        // 🔥 Generate new key
+        const newKey = apiKeyChaoticUnicode();
+
+        // 🔥 Save to KV
+        await env.GLITCHPROTECT_KV.put("API_KEY", newKey);
+
+        result = newKey;
+      }
+
       else if (url.pathname === "/hash") {
         const hex = url.searchParams.get("hex");
-        if (!hex) return new Response("Missing 'hex' param", { status: 400, headers: corsHeaders });
+        if (!hex) {
+          return new Response("Missing 'hex' param", {
+            status: 400,
+            headers: corsHeaders
+          });
+        }
         result = await hashHex(hex);
-      } 
+      }
+
       else {
         return new Response("Not Found", { status: 404, headers: corsHeaders });
       }
 
-      // Return the result with CORS headers
-      return new Response(result, { headers: { ...corsHeaders, "Content-Type": "text/plain; charset=utf-8" } });
+      return new Response(result, {
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "text/plain; charset=utf-8"
+        }
+      });
 
     } catch (err) {
-      return new Response(err.message, { status: 500, headers: corsHeaders });
+      return new Response(err.message, {
+        status: 500,
+        headers: corsHeaders
+      });
     }
   }
 };
+
+/**
+ * KV API Key Validator
+ */
+async function validateApiKey(request, env) {
+  const provided = request.headers.get("x-api-key");
+  if (!provided) return false;
+
+  const stored = await env.GLITCHPROTECT_KV.get("API_KEY");
+  if (!stored) return false;
+
+  return provided === stored;
+}
 
 /**
  * Core Logic
@@ -84,9 +124,15 @@ async function hashHex(hexString) {
 function bytesToChaoticUnicode(bytes) {
   let out = "";
   for (let i = 0; i < bytes.length; i += 4) {
-    const code = (bytes[i] << 24) | (bytes[i + 1] << 16) | (bytes[i + 2] << 8) | bytes[i + 3];
+    const code =
+      (bytes[i] << 24) |
+      (bytes[i + 1] << 16) |
+      (bytes[i + 2] << 8) |
+      bytes[i + 3];
+
     const safe = code & 0x10FFFF;
-    // Skip surrogate pairs to prevent encoding errors
+
+    // Avoid surrogate range
     if (safe >= 0xD800 && safe <= 0xDFFF) {
       out += String.fromCodePoint(safe ^ 0x100);
     } else {
@@ -105,5 +151,7 @@ function hexToBytes(hex) {
 }
 
 function bytesToHex(bytes) {
-  return [...bytes].map(b => b.toString(16).padStart(2, "0")).join("");
+  return [...bytes]
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
 }
