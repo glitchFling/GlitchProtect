@@ -18,9 +18,17 @@ export default {
     }
 
     // 🔐 KV API KEY CHECK
-    if (!(await validateApiKey(request, env))) {
-      return new Response("Unauthorized", { status: 401, headers: corsHeaders });
-    }
+const storedKey = await env.GLITCHPROTECT_KV.get("API_KEY");
+
+// Allow /apikey with no stored key (bootstrap mode)
+if (!storedKey && url.pathname === "/apikey") {
+  // allow through without validation
+} else {
+  const provided = request.headers.get("x-api-key");
+  if (!provided || provided !== storedKey) {
+    return new Response("Unauthorized", { status: 401, headers: corsHeaders });
+  }
+}
 
     // Only allow GET
     if (method !== "GET") {
