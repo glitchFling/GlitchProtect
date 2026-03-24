@@ -16,38 +16,20 @@ export default {
     }
 
     const storedKey = await env.GLITCHPROTECT_KV.get("API_KEY");
-    const RESET_PASSWORD = "RESET_ME_NOW";
-
-    // RESET ENDPOINT
-    if (url.pathname === "/reset") {
-      const override = url.searchParams.get("override");
-      if (override !== RESET_PASSWORD) {
-        return new Response("Unauthorized reset", {
-          status: 401,
-          headers: corsHeaders
-        });
-      }
-
-      await env.GLITCHPROTECT_KV.delete("API_KEY");
-      return new Response("API key reset. Call /apikey again.", {
-        headers: corsHeaders
-      });
-    }
-
-    // 🔓 AUTH DISABLED — NO MORE 401
-    // (kept here so you can re-enable later)
-    // const isBootstrap = !storedKey && url.pathname === "/apikey";
-    // if (!isBootstrap) {
-    //   const provided =
-    //     request.headers.get("x-api-key") ||
-    //     url.searchParams.get("key");
-    //   if (!provided || provided !== storedKey) {
-    //     return new Response("Unauthorized", { status: 401, headers: corsHeaders });
-    //   }
-    // }
+    const RESET_PASSWORD = env.RESET_PASSWORD;
+    const BOOTSTRAP_SECRET = env.BOOTSTRAP_SECRET;
 
     if (method !== "GET") {
       return new Response("Method Not Allowed", { status: 405, headers: corsHeaders });
+    }
+
+    if (url.pathname === "/") {
+      return new Response("GlitchProtect Worker is running.", {
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "text/plain; charset=utf-8"
+        }
+      });
     }
 
     try {
@@ -59,6 +41,14 @@ export default {
       }
 
       else if (url.pathname === "/apikey") {
+        const auth = authorizeApiKeyIssue(request, storedKey, BOOTSTRAP_SECRET);
+        if (!auth.ok) {
+          return new Response(auth.message, {
+            status: 401,
+            headers: corsHeaders
+          });
+        }
+
         const raw = apiKeyChaoticUnicode();
         const safe = base64EncodeUnicode(raw);
         await env.GLITCHPROTECT_KV.put("API_KEY", safe);
@@ -74,6 +64,21 @@ export default {
           });
         }
         result = await hashHex(hex);
+      }
+
+      else if (url.pathname === "/reset") {
+        const provided =
+          request.headers.get("x-reset-password") ||
+          url.searchParams.get("override");
+        if (!RESET_PASSWORD || provided !== RESET_PASSWORD) {
+          return new Response("Unauthorized reset", {
+            status: 401,
+            headers: corsHeaders
+          });
+        }
+
+        await env.GLITCHPROTECT_KV.delete("API_KEY");
+        result = "API key reset. Call /apikey again.";
       }
 
       else {
@@ -96,6 +101,27 @@ export default {
   }
 };
 
+function authorizeApiKeyIssue(request, storedKey, bootstrapSecret) {
+  const providedApiKey =
+    request.headers.get("x-api-key") ||
+    new URL(request.url).searchParams.get("key");
+
+  if (storedKey) {
+    if (!providedApiKey || providedApiKey !== storedKey) {
+      return { ok: false, message: "Unauthorized" };
+    }
+    return { ok: true };
+  }
+
+  const providedBootstrap =
+    request.headers.get("x-bootstrap-secret") ||
+    new URL(request.url).searchParams.get("bootstrap");
+  if (!bootstrapSecret || providedBootstrap !== bootstrapSecret) {
+    return { ok: false, message: "Unauthorized bootstrap" };
+  }
+  return { ok: true };
+}
+
 async function masterChaoticUnicode32(input) {
   const enc = new TextEncoder().encode(input);
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", enc));
@@ -115,6 +141,9 @@ function apiKeyChaoticUnicode() {
 }
 
 async function hashHex(hexString) {
+  if (!/^[0-9a-fA-F]+$/.test(hexString) || hexString.length % 2 !== 0) {
+    throw new Error("Invalid hex input");
+  }
   const bytes = hexToBytes(hexString);
   const hashBuffer = await crypto.subtle.digest("SHA-512", bytes);
   return bytesToHex(new Uint8Array(hashBuffer));

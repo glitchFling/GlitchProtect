@@ -24,13 +24,29 @@ Generates a deterministic chaotic string based on your input.
 Generates a 2048-byte high-entropy random Unicode string.
 - **Endpoint:** `/apikey`
 - **Method:** `GET`
-- **Example:** `https://your-worker.workers.dev`
+- **Auth:** 
+  - If no API key exists yet, provide bootstrap secret via `x-bootstrap-secret` header (or `?bootstrap=`).
+  - If an API key already exists, provide `x-api-key` header (or `?key=`).
+- **Example:** `https://your-worker.workers.dev/apikey`
 
 ### 3. Hex to SHA-512
 Hashes a hex string using SHA-512.
 - **Endpoint:** `/hash`
 - **Method:** `GET`
 - **Params:** `?hex=abcdef1234...`
+
+### 4. Reset API Key
+Deletes the stored API key so bootstrap can run again.
+- **Endpoint:** `/reset`
+- **Method:** `GET`
+- **Auth:** `x-reset-password` header (or `?override=`) must match `RESET_PASSWORD` env var.
+
+## 🔐 Required Worker Secrets
+
+Set these as Cloudflare Worker secrets:
+
+- `BOOTSTRAP_SECRET`: required for first-time `/apikey` bootstrap when no API key is stored.
+- `RESET_PASSWORD`: required for `/reset`.
 
 ## 📦 Deployment
 
