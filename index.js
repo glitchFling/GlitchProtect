@@ -50,7 +50,7 @@ export default {
         const raw = apiKeyChaoticUnicode();
 
         // 🔥 Convert to Base64 for header safety
-        const safe = btoa(raw);
+        const safe = base64EncodeUnicode(raw);
 
         // 🔥 Save to KV
         await env.GLITCHPROTECT_KV.put("API_KEY", safe);
@@ -154,4 +154,14 @@ function bytesToHex(bytes) {
   return [...bytes]
     .map(b => b.toString(16).padStart(2, "0"))
     .join("");
+}
+
+/**
+ * Unicode‑safe Base64 encoder
+ */
+function base64EncodeUnicode(str) {
+  const bytes = new TextEncoder().encode(str);
+  let binary = "";
+  for (let b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary);
 }
