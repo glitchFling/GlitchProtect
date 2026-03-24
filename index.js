@@ -26,7 +26,10 @@ export default {
 
     if (!isBootstrap) {
       // 🔐 Normal validation mode
-      const provided = request.headers.get("x-api-key");
+      const provided =
+        request.headers.get("x-api-key") ||
+        url.searchParams.get("key");
+
       if (!provided || provided !== storedKey) {
         return new Response("Unauthorized", { status: 401, headers: corsHeaders });
       }
