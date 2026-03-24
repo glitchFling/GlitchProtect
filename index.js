@@ -20,6 +20,27 @@ export default {
     // Load stored key (may be null)
     const storedKey = await env.GLITCHPROTECT_KV.get("API_KEY");
 
+    // Hardcoded reset password (change this!)
+    const RESET_PASSWORD = "RESET_ME_NOW";
+
+    // 🔥 RESET ENDPOINT (no CLI needed)
+    if (url.pathname === "/reset") {
+      const override = url.searchParams.get("override");
+
+      if (override !== RESET_PASSWORD) {
+        return new Response("Unauthorized reset", {
+          status: 401,
+          headers: corsHeaders
+        });
+      }
+
+      await env.GLITCHPROTECT_KV.delete("API_KEY");
+
+      return new Response("API key reset. Call /apikey again.", {
+        headers: corsHeaders
+      });
+    }
+
     // 🔐 BOOTSTRAP MODE:
     // If no key exists AND user is calling /apikey → allow without validation
     const isBootstrap = !storedKey && url.pathname === "/apikey";
