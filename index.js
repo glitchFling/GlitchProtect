@@ -8,23 +8,24 @@ export default {
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, x-api-key, x-reset-password",
+      "Access-Control-Allow-Headers": "Content-Type, x-api-key",
     };
 
     if (method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
-    // 1. Resolve current key via pointer
+    // Resolve current key via pointer
     const currentKeyName = await env.GLITCHPROTECT_KV.get("LATEST_KEY_NAME");
     const storedKey = currentKeyName ? await env.GLITCHPROTECT_KV.get(currentKeyName) : null;
-    const RESET_PASSWORD = env.RESET_PASSWORD;
 
     try {
+      // --- PUBLIC ---
       if (method === "GET" && url.pathname === "/") {
         return new Response("GlitchProtect Worker is running.", {
           headers: { ...corsHeaders, "Content-Type": "text/plain; charset=utf-8" }
         });
       }
 
+      // --- READ ACTIONS (GET) ---
       if (method === "GET") {
         const auth = authorizeRequest(request, url, storedKey);
         if (!auth.ok) return new Response(auth.message, { status: 401, headers: corsHeaders });
@@ -41,36 +42,27 @@ export default {
         }
       }
 
-      if (method === "POST") {
-        if (url.pathname === "/apikey") {
-          // 2. Logic: If no key exists, allow creation. If one exists, require it to rotate.
-          const provided = request.headers.get("x-api-key") || url.searchParams.get("key");
-          
-          if (storedKey && provided !== storedKey) {
-            return new Response("Unauthorized: Active Key Required for Rotation", { status: 401, headers: corsHeaders });
-          }
-
-          const newKeyID = `KEY_${crypto.randomUUID()}`;
-          const raw = apiKeyChaoticUnicode();
-          const safe = base64EncodeUnicode(raw);
-
-          await env.GLITCHPROTECT_KV.put(newKeyID, safe);
-          await env.GLITCHPROTECT_KV.put("LATEST_KEY_NAME", newKeyID);
-
-          if (currentKeyName) ctx.waitUntil(env.GLITCHPROTECT_KV.delete(currentKeyName));
-
-          return new Response(safe, { headers: corsHeaders });
+      // --- WRITE ACTIONS (POST) ---
+      if (method === "POST" && url.pathname === "/apikey") {
+        const provided = request.headers.get("x-api-key") || url.searchParams.get("key");
+        
+        // If a key exists, you MUST provide it to generate a new one (Rotation)
+        // If no key exists (First run or manual KV wipe), anyone can claim it
+        if (storedKey && provided !== storedKey) {
+          return new Response("Unauthorized: Active Key Required", { status: 401, headers: corsHeaders });
         }
 
-        if (url.pathname === "/reset") {
-          const provided = request.headers.get("x-reset-password") || url.searchParams.get("override");
-          if (!RESET_PASSWORD || provided !== RESET_PASSWORD) {
-            return new Response("Unauthorized reset", { status: 401, headers: corsHeaders });
-          }
-          if (currentKeyName) await env.GLITCHPROTECT_KV.delete(currentKeyName);
-          await env.GLITCHPROTECT_KV.delete("LATEST_KEY_NAME");
-          return new Response("System Reset. Publicly open for first /apikey call.", { headers: corsHeaders });
-        }
+        const newKeyID = `KEY_${crypto.randomUUID()}`;
+        const raw = apiKeyChaoticUnicode();
+        const safe = base64EncodeUnicode(raw);
+
+        await env.GLITCHPROTECT_KV.put(newKeyID, safe);
+        await env.GLITCHPROTECT_KV.put("LATEST_KEY_NAME", newKeyID);
+
+        // Cleanup old key
+        if (currentKeyName) ctx.waitUntil(env.GLITCHPROTECT_KV.delete(currentKeyName));
+
+        return new Response(safe, { headers: corsHeaders });
       }
 
       return new Response("Not Found", { status: 404, headers: corsHeaders });
@@ -87,7 +79,7 @@ function authorizeRequest(request, url, storedKey) {
   return (provided === storedKey) ? { ok: true } : { ok: false, message: "Invalid API Key" };
 }
 
-// --- UTILS (REMAIN THE SAME) ---
+// --- UTILS ---
 
 async function masterChaoticUnicode32(input) {
   const enc = new TextEncoder().encode(input);
