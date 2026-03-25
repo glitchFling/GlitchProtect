@@ -1,6 +1,6 @@
 # 🌌 UniMaster Worker
 
-![Static Badge](https://img.shields.io/badge/Failing-FF0000?logo=Cloudflare&logoColor=FFFFFF&label=Cloudflare%20Workers&labelColor=FF8C00)
+![Static Badge](https://img.shields.io/badge/Passing-brightgreen?logo=Cloudflare&logoColor=FFFFFF&label=Cloudflare%20Workers&labelColor=FF8C00)
 
 A high-entropy Unicode string generator and cryptographic utility running on the edge. **UniMaster** converts standard inputs into chaotic, full-spectrum Unicode strings using the Web Crypto API.
 
