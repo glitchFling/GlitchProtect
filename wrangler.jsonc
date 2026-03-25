@@ -6,7 +6,21 @@
   "kv_namespaces": [
     {
       "binding": "GLITCHPROTECT_KV",
-      "id": "3f8afb46acf14c3a9c7bf04b09ffe465",
-    },
-  ], 
+      "id": "3f8afb46acf14c3a9c7bf04b09ffe465"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MASTER_GATE",
+        "class_name": "MasterGate"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_classes": ["MasterGate"]
+    }
+  ]
 }
