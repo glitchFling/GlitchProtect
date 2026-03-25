@@ -3,8 +3,6 @@
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    
-    // Durable Object binding (must match wrangler config)
     const id = env.MASTER_GATE.idFromName('global-lock');
     const gate = env.MASTER_GATE.get(id);
 
@@ -14,50 +12,37 @@ export default {
       "Access-Control-Allow-Headers": "Content-Type, x-api-key",
     };
 
-    if (request.method === "OPTIONS") {
-      return new Response(null, { headers: corsHeaders });
-    }
+    if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
     try {
-      // 1. Key Management Routes (Forwarded to Durable Object)
+      // 1. Key Management (Forwarded to Durable Object)
       if (url.pathname === "/apikey" || url.pathname === "/verify") {
         const gateResponse = await gate.fetch(request);
         const body = await gateResponse.text();
-        return new Response(body, { 
-          status: gateResponse.status, 
-          headers: corsHeaders 
-        });
+        return new Response(body, { status: gateResponse.status, headers: corsHeaders });
       }
 
-      // 2. Public Info
+      // 2. Health Check
       if (url.pathname === "/") {
-        return new Response("GlitchProtect DO is Active.", { 
-          headers: { ...corsHeaders, "Content-Type": "text/plain" } 
-        });
+        return new Response("GlitchProtect DO (SQLite) is Active.", { headers: corsHeaders });
       }
 
       // 3. Protected Utility Actions
       if (url.pathname === "/generate" || url.pathname === "/hash") {
-        // Validate key with DO (using /check so it doesn't burn during generation)
-        const checkReq = new Request(url.origin + "/check", {
+        const auth = await gate.fetch(new Request(url.origin + "/check", {
           headers: { "x-api-key": request.headers.get("x-api-key") || "" }
-        });
-        const auth = await gate.fetch(checkReq);
+        }));
         
-        if (auth.status !== 200) {
-          return new Response("Unauthorized", { status: 401, headers: corsHeaders });
-        }
+        if (auth.status !== 200) return new Response("Unauthorized", { status: 401, headers: corsHeaders });
 
         if (url.pathname === "/generate") {
-          const result = await masterChaoticUnicode32(url.searchParams.get("input") || "default");
-          return new Response(result, { headers: corsHeaders });
+          return new Response(await masterChaoticUnicode32(url.searchParams.get("input") || "default"), { headers: corsHeaders });
         }
-
+        
         if (url.pathname === "/hash") {
           const hex = url.searchParams.get("hex");
           if (!hex) return new Response("Missing 'hex'", { status: 400, headers: corsHeaders });
-          const result = await hashHex(hex);
-          return new Response(result, { headers: corsHeaders });
+          return new Response(await hashHex(hex), { headers: corsHeaders });
         }
       }
 
@@ -70,8 +55,7 @@ export default {
 };
 
 /**
- * THE DURABLE OBJECT CLASS
- * Must be exported for Wrangler to find it.
+ * THE DURABLE OBJECT CLASS (SQLite-Backed)
  */
 export class MasterGate {
   constructor(state) {
@@ -83,7 +67,7 @@ export class MasterGate {
     const providedKey = request.headers.get("x-api-key");
     const storedKey = await this.state.storage.get("MASTER_KEY");
 
-    // Initialize (First-write wins)
+    // Initialize Key
     if (url.pathname === "/apikey" && request.method === "POST") {
       if (storedKey) return new Response("Locked", { status: 403 });
       
@@ -109,7 +93,7 @@ export class MasterGate {
         : new Response("FAIL", { status: 401 });
     }
 
-    return new Response("DO Path Not Found", { status: 404 });
+    return new Response("DO Not Found", { status: 404 });
   }
 }
 
@@ -119,9 +103,7 @@ async function masterChaoticUnicode32(input) {
   const enc = new TextEncoder().encode(input);
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", enc));
   const bytes = new Uint8Array(2048);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = hash[i % hash.length] ^ (i * 31);
-  }
+  for (let i = 0; i < bytes.length; i++) bytes[i] = hash[i % hash.length] ^ (i * 31);
   return bytesToChaoticUnicode(bytes);
 }
 
@@ -152,8 +134,6 @@ function bytesToChaoticUnicode(bytes) {
 function base64EncodeUnicode(str) {
   const bytes = new TextEncoder().encode(str);
   let binString = "";
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binString += String.fromCharCode(bytes[i]);
-  }
+  for (let i = 0; i < bytes.byteLength; i++) binString += String.fromCharCode(bytes[i]);
   return btoa(binString);
 }
