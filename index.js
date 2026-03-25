@@ -3,7 +3,10 @@
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const { method } = request;
+    
+    // Durable Object binding (must match wrangler config)
+    const id = env.MASTER_GATE.idFromName('global-lock');
+    const gate = env.MASTER_GATE.get(id);
 
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
@@ -11,58 +14,51 @@ export default {
       "Access-Control-Allow-Headers": "Content-Type, x-api-key",
     };
 
-    if (method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-
-    // Resolve current key via pointer
-    const currentKeyName = await env.GLITCHPROTECT_KV.get("LATEST_KEY_NAME");
-    const storedKey = currentKeyName ? await env.GLITCHPROTECT_KV.get(currentKeyName) : null;
+    if (request.method === "OPTIONS") {
+      return new Response(null, { headers: corsHeaders });
+    }
 
     try {
-      // --- PUBLIC ---
-      if (method === "GET" && url.pathname === "/") {
-        return new Response("GlitchProtect Worker is running.", {
-          headers: { ...corsHeaders, "Content-Type": "text/plain; charset=utf-8" }
+      // 1. Key Management Routes (Forwarded to Durable Object)
+      if (url.pathname === "/apikey" || url.pathname === "/verify") {
+        const gateResponse = await gate.fetch(request);
+        const body = await gateResponse.text();
+        return new Response(body, { 
+          status: gateResponse.status, 
+          headers: corsHeaders 
         });
       }
 
-      // --- READ ACTIONS (GET) ---
-      if (method === "GET") {
-        const auth = authorizeRequest(request, url, storedKey);
-        if (!auth.ok) return new Response(auth.message, { status: 401, headers: corsHeaders });
+      // 2. Public Info
+      if (url.pathname === "/") {
+        return new Response("GlitchProtect DO is Active.", { 
+          headers: { ...corsHeaders, "Content-Type": "text/plain" } 
+        });
+      }
+
+      // 3. Protected Utility Actions
+      if (url.pathname === "/generate" || url.pathname === "/hash") {
+        // Validate key with DO (using /check so it doesn't burn during generation)
+        const checkReq = new Request(url.origin + "/check", {
+          headers: { "x-api-key": request.headers.get("x-api-key") || "" }
+        });
+        const auth = await gate.fetch(checkReq);
+        
+        if (auth.status !== 200) {
+          return new Response("Unauthorized", { status: 401, headers: corsHeaders });
+        }
 
         if (url.pathname === "/generate") {
-          const input = url.searchParams.get("input") || "default";
-          return new Response(await masterChaoticUnicode32(input), { headers: corsHeaders });
+          const result = await masterChaoticUnicode32(url.searchParams.get("input") || "default");
+          return new Response(result, { headers: corsHeaders });
         }
 
         if (url.pathname === "/hash") {
           const hex = url.searchParams.get("hex");
           if (!hex) return new Response("Missing 'hex'", { status: 400, headers: corsHeaders });
-          return new Response(await hashHex(hex), { headers: corsHeaders });
+          const result = await hashHex(hex);
+          return new Response(result, { headers: corsHeaders });
         }
-      }
-
-      // --- WRITE ACTIONS (POST) ---
-      if (method === "POST" && url.pathname === "/apikey") {
-        const provided = request.headers.get("x-api-key") || url.searchParams.get("key");
-        
-        // If a key exists, you MUST provide it to generate a new one (Rotation)
-        // If no key exists (First run or manual KV wipe), anyone can claim it
-        if (storedKey && provided !== storedKey) {
-          return new Response("Unauthorized: Active Key Required", { status: 401, headers: corsHeaders });
-        }
-
-        const newKeyID = `KEY_${crypto.randomUUID()}`;
-        const raw = apiKeyChaoticUnicode();
-        const safe = base64EncodeUnicode(raw);
-
-        await env.GLITCHPROTECT_KV.put(newKeyID, safe);
-        await env.GLITCHPROTECT_KV.put("LATEST_KEY_NAME", newKeyID);
-
-        // Cleanup old key
-        if (currentKeyName) ctx.waitUntil(env.GLITCHPROTECT_KV.delete(currentKeyName));
-
-        return new Response(safe, { headers: corsHeaders });
       }
 
       return new Response("Not Found", { status: 404, headers: corsHeaders });
@@ -73,19 +69,59 @@ export default {
   }
 };
 
-function authorizeRequest(request, url, storedKey) {
-  if (!storedKey) return { ok: false, message: "System Locked: Initialize via POST /apikey" };
-  const provided = request.headers.get("x-api-key") || url.searchParams.get("key");
-  return (provided === storedKey) ? { ok: true } : { ok: false, message: "Invalid API Key" };
+/**
+ * THE DURABLE OBJECT CLASS
+ * Must be exported for Wrangler to find it.
+ */
+export class MasterGate {
+  constructor(state) {
+    this.state = state;
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+    const providedKey = request.headers.get("x-api-key");
+    const storedKey = await this.state.storage.get("MASTER_KEY");
+
+    // Initialize (First-write wins)
+    if (url.pathname === "/apikey" && request.method === "POST") {
+      if (storedKey) return new Response("Locked", { status: 403 });
+      
+      const newKey = apiKeyChaoticUnicode();
+      const safe = base64EncodeUnicode(newKey);
+      await this.state.storage.put("MASTER_KEY", safe);
+      return new Response(safe);
+    }
+
+    // Verify AND Burn (One-time use)
+    if (url.pathname === "/verify") {
+      if (storedKey && providedKey === storedKey) {
+        await this.state.storage.delete("MASTER_KEY");
+        return new Response("VALID_AND_BURNED", { status: 200 });
+      }
+      return new Response("INVALID_OR_EXPIRED", { status: 401 });
+    }
+
+    // Check (Validate without burning)
+    if (url.pathname === "/check") {
+      return (storedKey && providedKey === storedKey) 
+        ? new Response("OK", { status: 200 }) 
+        : new Response("FAIL", { status: 401 });
+    }
+
+    return new Response("DO Path Not Found", { status: 404 });
+  }
 }
 
-// --- UTILS ---
+// --- UTILITIES ---
 
 async function masterChaoticUnicode32(input) {
   const enc = new TextEncoder().encode(input);
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", enc));
   const bytes = new Uint8Array(2048);
-  for (let i = 0; i < bytes.length; i++) bytes[i] = hash[i % hash.length] ^ (i * 31);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = hash[i % hash.length] ^ (i * 31);
+  }
   return bytesToChaoticUnicode(bytes);
 }
 
@@ -116,6 +152,8 @@ function bytesToChaoticUnicode(bytes) {
 function base64EncodeUnicode(str) {
   const bytes = new TextEncoder().encode(str);
   let binString = "";
-  for (let i = 0; i < bytes.byteLength; i++) binString += String.fromCharCode(bytes[i]);
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binString += String.fromCharCode(bytes[i]);
+  }
   return btoa(binString);
 }
